@@ -45,7 +45,7 @@ void ofApp::setup(){
 	//soundPlayer.play();
 	
 	//計測開始時間取得
-	start_time_ = clock();
+	//start_time_ = clock();
 	//マウスカーソルを隠す
 	ofHideCursor();
 }
@@ -114,16 +114,16 @@ void ofApp::switchGuiColor(bool _switch) {
 //--------------------------------------------------------------
 void ofApp::update(){
 	//経過時間の取得
-	clock_t end = clock();
+	//clock_t end = clock();
 
 	//差分を取り秒数に変換
-	double sec = (double)(end - start_time_) / CLOCKS_PER_SEC;
+	//double sec = (double)(end - start_time_) / CLOCKS_PER_SEC;
 
 	//規定時間が経過したら自身を削除
-	if (sec >= total_sec_) {
+	/*if (sec >= total_sec_) {
 		ofExit();
 		return;
-	}
+	}*/
 
 	//フレームレートを設定
 	ofSetFrameRate(simulationFPS);
@@ -205,7 +205,7 @@ void ofApp::draw(){
 	}
 	//ロゴ 
 	ofEnableBlendMode(OF_BLENDMODE_SUBTRACT);
-	flowToolsLogo.draw(0, 0, windowWidth, windowHeight);//コメントアウト
+	flowToolsLogo.draw(0, 0, windowWidth, windowHeight);
 	
 	//GUI
 	if (toggleGuiDraw) { 

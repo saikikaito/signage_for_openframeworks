@@ -3,7 +3,6 @@
 #include "ofMain.h"
 #include "ofxGui.h"
 #include "ofxFlowTools.h"
-#include <time.h>
 
 using namespace flowTools;
 
@@ -57,7 +56,7 @@ public:
 
 	int time_count_val_;
 	double total_sec_ = 60;
-	clock_t start_time_;
+	//clock_t start_time_;
 
 	vector< ftFlow* >		flows;
 	ftOpticalFlow			opticalFlow;
