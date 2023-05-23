@@ -3,105 +3,151 @@
 #include "ofMain.h"
 #include "ofxGui.h"
 #include "ofxFlowTools.h"
+#include "ofxJSON.h"
+
+//#define USE_PROGRAMMABLE_GL
 
 using namespace flowTools;
 
-enum visualizationTypes{ 
-	INPUT_FOR_DEN = 0, 
-	INPUT_FOR_VEL, 
-	FLOW_VEL, 
-	BRIDGE_VEL, 
-	BRIDGE_DEN, 
-	BRIDGE_TMP, 
-	BRIDGE_PRS, 
-	OBSTACLE, 
-	OBST_OFFSET, 
-	FLUID_BUOY, 
-	FLUID_VORT, 
-	FLUID_DIVE, 
-	FLUID_TMP, 
-	FLUID_PRS, 
-	FLUID_VEL, 
-	FLUID_DEN 
+enum drawModeEnum{
+	DRAW_COMPOSITE = 0,
+	DRAW_FLUID_DENSITY,
+	DRAW_PARTICLES,
+	DRAW_VELDOTS,
+	DRAW_FLUID_FIELDS,
+	DRAW_FLUID_VELOCITY,
+	DRAW_FLUID_PRESSURE,
+	DRAW_FLUID_TEMPERATURE,
+	DRAW_FLUID_DIVERGENCE,
+	DRAW_FLUID_VORTICITY,
+	DRAW_FLUID_BUOYANCY,
+	DRAW_FLUID_OBSTACLE,
+	DRAW_FLOW_MASK,
+	DRAW_OPTICAL_FLOW,
+	DRAW_SOURCE,
+	DRAW_MOUSE
 };
-
-const vector<string> visualizationNames({
-	"input for density", 
-	"input for velocity", 
-	"optical flow", 
-	"bridge velocity", 
-	"bridge density", 
-	"bridge temperature", 
-	"bridge pressure", 
-	"obstacle", 
-	"obstacle offset", 
-	"fluid buoyancy", 
-	"fluid vorticity", 
-	"fluid divergence", 
-	"fluid temperature", 
-	"fluid pressure", 
-	"fluid velocity", 
-	"fluid density"
-});
 
 class ofApp : public ofBaseApp{
 public:
-	
+
+	ofApp( const char* arg ){
+		_proctime = ofToInt( arg );
+	}
+
 	void	setup();
 	void	update();
 	void	draw();
-	void	keyPressed(int key);
-	
-	int		densityWidth, densityHeight, simulationWidth, simulationHeight, windowWidth, windowHeight;
 
-	int time_count_val_;
-	double total_sec_ = 60;
-	//clock_t start_time_;
+	// Exe Time
+	clock_t				_proctime;
 
-	vector< ftFlow* >		flows;
-	ftOpticalFlow			opticalFlow;
-//	ftVelocityBridgeFlow	velocityBridgeFlow;
-//	ftDensityBridgeFlow		densityBridgeFlow;
-//	ftTemperatureBridgeFlow temperatureBridgeFlow;
-	ftCombinedBridgeFlow 	combinedBridgeFlow;
-	ftFluidFlow				fluidFlow;
-	
-	ofImage					flowToolsLogo;
-	//ofSoundPlayer			soundPlayer;
-	
-	ofParameter<int>		outputWidth;
-	ofParameter<int>		outputHeight;
-	ofParameter<int>		simulationScale;
-	ofParameter<int>		simulationFPS;
-	void simulationResolutionListener(int &_value);
-	
-	ofParameterGroup		visualizationParameters;
-	ofParameter<int>		visualizationMode;
-	ofParameter<string>		visualizationName;
-	ofParameter<float>		visualizationScale;
-	ofParameter<bool>		toggleVisualizationScalar;
-	void visualizationModeListener(int& _value) 			{ visualizationName.set(visualizationNames[_value]); }
-	void visualizationScaleListener(float& _value)			{ for (auto flow : flows) { flow->setVisualizationScale(_value); } }
-	void toggleVisualizationScalarListener(bool &_value)	{ for (auto flow : flows) { flow->setVisualizationToggleScalar(_value); } }
-	
+	// Camera Setting
+	int _camDevID;
+	int _camWidth, _camHeight;
+	bool _camFlipX, _camFlipY;
+	int _camFps;
+
+	// Camera
 	ofVideoGrabber		simpleCam;
-	ofFbo				cameraFbo;
-	
+	bool				didCamUpdate;
+	ftFbo				cameraFbo;
+	ofParameter<bool>	doFlipCamera;
+
+	// Time
+	float				lastTime;
+	float				deltaTime;
+
+	// FlowTools
+	int					flowWidth;
+	int					flowHeight;
+	int					drawWidth;
+	int					drawHeight;
+
+	ftOpticalFlow		opticalFlow;
+	ftVelocityMask		velocityMask;
+	ftFluidSimulation	fluidSimulation;
+	ftParticleFlow		particleFlow;
+
+	ftVelocitySpheres	velocityDots;
+
+	ofImage				flowToolsLogoImage;
+	bool				showLogo;
+
+	// MouseDraw
+	ftDrawMouseForces	mouseForces;
+
+	// Visualisations
+	ofParameterGroup	visualizeParameters;
+	ftDisplayScalar		displayScalar;
+	ftVelocityField		velocityField;
+	ftTemperatureField	temperatureField;
+	ftPressureField		pressureField;
+	ftVTField			velocityTemperatureField;
+
+	ofParameter<bool>	showScalar;
+	ofParameter<bool>	showField;
+	ofParameter<float>	displayScalarScale;
+	void				setDisplayScalarScale(float& _value) { displayScalar.setScale(_value); }
+	ofParameter<float>	velocityFieldScale;
+	void				setVelocityFieldScale(float& _value) { velocityField.setVelocityScale(_value); velocityTemperatureField.setVelocityScale(_value); }
+	ofParameter<float>	temperatureFieldScale;
+	void				setTemperatureFieldScale(float& _value) { temperatureField.setTemperatureScale(_value); velocityTemperatureField.setTemperatureScale(_value); }
+	ofParameter<float>	pressureFieldScale;
+	void				setPressureFieldScale(float& _value) { pressureField.setPressureScale(_value); }
+	ofParameter<bool>	velocityLineSmooth;
+	void				setVelocityLineSmooth(bool& _value) { velocityField.setLineSmooth(_value); velocityTemperatureField.setLineSmooth(_value);  }
+
+	// GUI
 	ofxPanel			gui;
 	void				setupGui();
-	void				switchGuiColor(bool _switch);
+	void				keyPressed(int key);
+	void				drawGui();
+	ofParameter<bool>	toggleGuiDraw;
 	ofParameter<float>	guiFPS;
 	ofParameter<float>	guiMinFPS;
-	ofParameter<bool>	toggleFullScreen;
-	ofParameter<bool>	toggleGuiDraw;
-	ofParameter<bool>	toggleCameraDraw;
-	ofParameter<bool>	toggleReset;
-
-	void				toggleFullScreenListener(bool& _value) { ofSetFullscreen(_value);}
-	void				toggleResetListener(bool& _value);
-	void 				windowResized(ofResizeEventArgs & _resize){ windowWidth = _resize.width; windowHeight = _resize.height; }
-
-	void				drawGui();
 	deque<float>		deltaTimeDeque;
-	float				lastTime;
+	ofParameter<bool>	doFullScreen;
+	void				setFullScreen(bool& _value) { ofSetFullscreen(_value);}
+
+	// DRAW
+	ofParameter<bool>	doDrawCamBackground;
+
+	ofParameter<int>	drawMode;
+	void				drawModeSetName(int& _value) ;
+	ofParameter<string> drawName;
+
+	void				drawComposite()			{ drawComposite(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawComposite(int _x, int _y, int _width, int _height);
+	void				drawParticles()			{ drawParticles(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawParticles(int _x, int _y, int _width, int _height);
+	void				drawFluidFields()		{ drawFluidFields(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawFluidFields(int _x, int _y, int _width, int _height);
+	void				drawFluidDensity()		{ drawFluidDensity(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawFluidDensity(int _x, int _y, int _width, int _height);
+	void				drawFluidVelocity()		{ drawFluidVelocity(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawFluidVelocity(int _x, int _y, int _width, int _height);
+	void				drawFluidPressure()		{ drawFluidPressure(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawFluidPressure(int _x, int _y, int _width, int _height);
+	void				drawFluidTemperature()	{ drawFluidTemperature(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawFluidTemperature(int _x, int _y, int _width, int _height);
+	void				drawFluidDivergence()	{ drawFluidDivergence(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawFluidDivergence(int _x, int _y, int _width, int _height);
+	void				drawFluidVorticity()	{ drawFluidVorticity(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawFluidVorticity(int _x, int _y, int _width, int _height);
+	void				drawFluidBuoyance()		{ drawFluidBuoyance(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawFluidBuoyance(int _x, int _y, int _width, int _height);
+	void				drawFluidObstacle()		{ drawFluidObstacle(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawFluidObstacle(int _x, int _y, int _width, int _height);
+	void				drawMask()				{ drawMask(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawMask(int _x, int _y, int _width, int _height);
+	void				drawOpticalFlow()		{ drawOpticalFlow(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawOpticalFlow(int _x, int _y, int _width, int _height);
+	void				drawSource()			{ drawSource(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawSource(int _x, int _y, int _width, int _height);
+	void				drawMouseForces()		{ drawMouseForces(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawMouseForces(int _x, int _y, int _width, int _height);
+
+	void				drawVelocityDots()		{ drawVelocityDots(0, 0, ofGetWindowWidth(), ofGetWindowHeight()); }
+	void				drawVelocityDots(int _x, int _y, int _width, int _height);
 };

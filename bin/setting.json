@@ -1,0 +1,8 @@
+{
+	"deviceID":0,
+	"device_fps":60,
+	"device_width":1920,
+	"device_height":1080,
+	"device_flipX":false,
+	"device_flipY":true,
+}

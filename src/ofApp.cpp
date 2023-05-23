@@ -2,285 +2,599 @@
 
 //--------------------------------------------------------------
 void ofApp::setup(){
-	ofSetVerticalSync(true);
+
+	ofxJSONElement json;
+	json.open( "setting.json" );
+	_camDevID = json["deviceID"].asInt();
+	_camWidth = json["device_width"].asInt();
+	_camHeight = json["device_height"].asInt();
+	_camFlipX = json["device_flipX"].asBool();
+	_camFlipY = json["device_flipY"].asBool();
+	_camFps = json["device_fps"].asInt();
+
+	ofSetVerticalSync(false);
 	ofSetLogLevel(OF_LOG_NOTICE);
-	
-	densityWidth = 1280;
-	densityHeight = 720;
-	simulationWidth = densityWidth / 2;
-	simulationHeight = densityHeight / 2;
-	windowWidth = ofGetWindowWidth();
-	windowHeight = ofGetWindowHeight();
-	
-	opticalFlow.setup(simulationWidth, simulationHeight);
-//	velocityBridgeFlow.setup(simulationWidth, simulationHeight);
-//	densityBridgeFlow.setup(simulationWidth, simulationHeight, densityWidth, densityHeight);
-//	temperatureBridgeFlow.setup(simulationWidth, simulationHeight);
-	combinedBridgeFlow.setup(simulationWidth, simulationHeight, densityWidth, densityHeight);
-	fluidFlow.setup(simulationWidth, simulationHeight, densityWidth, densityHeight);
-	
-	flows.push_back(&opticalFlow);
-//	flows.push_back(&velocityBridgeFlow);
-//	flows.push_back(&densityBridgeFlow);
-//	flows.push_back(&temperatureBridgeFlow);
-	flows.push_back(&combinedBridgeFlow);
-	flows.push_back(&fluidFlow);
-	
-	//障害物として設定
-	flowToolsLogo.load("flowtools.png");
-	fluidFlow.addObstacle(flowToolsLogo.getTexture());
-	//flowToolsLogo.mirror(false, true);
-	
-	simpleCam.setup(densityWidth, densityHeight, true);
-	cameraFbo.allocate(densityWidth, densityHeight);
-	ftUtil::zero(cameraFbo);
-	
-	lastTime = ofGetElapsedTimef();
-	
+	ofSetFrameRate( 60 );
+
+	drawWidth = 1280;
+	drawHeight = 720;
+	// process all but the density on 16th resolution
+	flowWidth = drawWidth / 4;
+	flowHeight = drawHeight / 4;
+
+	// FLOW & MASK
+	opticalFlow.setup(flowWidth, flowHeight);
+	velocityMask.setup(drawWidth, drawHeight);
+
+	// FLUID & PARTICLES
+	fluidSimulation.setup(flowWidth, flowHeight, drawWidth, drawHeight);
+	particleFlow.setup(flowWidth, flowHeight, drawWidth, drawHeight);
+
+	flowToolsLogoImage.load("bg.png");
+	fluidSimulation.addObstacle(flowToolsLogoImage.getTexture());
+	showLogo = true;
+
+	velocityDots.setup(flowWidth / 4, flowHeight / 4);
+
+	// VISUALIZATION
+	displayScalar.setup(flowWidth, flowHeight);
+	velocityField.setup(flowWidth / 4, flowHeight / 4);
+	temperatureField.setup(flowWidth / 4, flowHeight / 4);
+	pressureField.setup(flowWidth / 4, flowHeight / 4);
+	velocityTemperatureField.setup(flowWidth / 4, flowHeight / 4);
+
+	// MOUSE DRAW
+	mouseForces.setup(flowWidth, flowHeight, drawWidth, drawHeight);
+
+	// CAMERA
+	simpleCam.setDeviceID( _camDevID );
+	simpleCam.setup(_camWidth, _camHeight, true);
+	didCamUpdate = false;
+	cameraFbo.allocate(_camWidth, _camHeight);
+	cameraFbo.black();
+
+	// GUI
 	setupGui();
 
-	//サウンド(必要なら)
-	//soundPlayer.load("");
-	//soundPlayer.setLoop(true);
-	//soundPlayer.play();
-	
-	//計測開始時間取得
-	//start_time_ = clock();
-	//マウスカーソルを隠す
-	ofHideCursor();
+	lastTime = ofGetElapsedTimef();
+
 }
 
 //--------------------------------------------------------------
 void ofApp::setupGui() {
-	//setting.xmlの作成(既に作られていたら読み込み)
-	gui.setup("settings");//名前
-	gui.setDefaultBackgroundColor(ofColor(0, 0, 0, 127));//背景
-	gui.setDefaultFillColor(ofColor(160, 160, 160, 160));//塗りつぶしの色
-	gui.add(guiFPS.set("average FPS", 0, 0, 60));//平均FPS
-	gui.add(guiMinFPS.set("minimum FPS", 0, 0, 60));//最小FPS
-	gui.add(toggleFullScreen.set("fullscreen (F)", true));//フルスクリーン表示
-	toggleFullScreen.addListener(this, &ofApp::toggleFullScreenListener);
-	gui.add(toggleGuiDraw.set("show gui (G)", true));//GUI(デバッグ用)
-	gui.add(toggleCameraDraw.set("draw camera (C)", false));//カメラ表示(デバッグ用)
-	gui.add(toggleReset.set("reset (R)", false));//リセット(デバッグ用)
-	toggleReset.addListener(this, &ofApp::toggleResetListener);
-	gui.add(outputWidth.set("output width", 1280, 256, 1920));//以下煙の動きのデバッグ用
-	gui.add(outputHeight.set("output height", 720, 144, 1080));
-	gui.add(simulationScale.set("simulation scale", 2, 1, 4));
-	gui.add(simulationFPS.set("simulation fps", 60, 1, 60));
-	outputWidth.addListener(this, &ofApp::simulationResolutionListener);
-	outputHeight.addListener(this, &ofApp::simulationResolutionListener);
-	simulationScale.addListener(this, &ofApp::simulationResolutionListener);
-	
-	visualizationParameters.setName("visualization");
-	visualizationParameters.add(visualizationMode.set("mode", FLUID_DEN, INPUT_FOR_DEN, FLUID_DEN));
-	visualizationParameters.add(visualizationName.set("name", "fluidFlow Density"));
-	visualizationParameters.add(visualizationScale.set("scale", 1, 0.1, 10.0));
-	visualizationParameters.add(toggleVisualizationScalar.set("show scalar", false));
-	visualizationMode.addListener(this, &ofApp::visualizationModeListener);
-	toggleVisualizationScalar.addListener(this, &ofApp::toggleVisualizationScalarListener);
-	visualizationScale.addListener(this, &ofApp::visualizationScaleListener);
-	
-	bool s = true;
-	switchGuiColor(s = !s);
-	//各パラメータ追加
-	gui.add(visualizationParameters);
-	for (auto flow : flows) {
-		switchGuiColor(s = !s);
-		gui.add(flow->getParameters());
-	}
-	//セーブ(2回目以降はロード)
-	if (!ofFile("settings.xml")) { gui.saveToFile("settings.xml"); }
-	gui.loadFromFile("settings.xml");
-	
-	gui.minimizeAll();
-	toggleGuiDraw = false;//true
-}
 
-//--------------------------------------------------------------
-void ofApp::switchGuiColor(bool _switch) {
-	//GUI
-	ofColor guiHeaderColor[2]; 
-	guiHeaderColor[0].set(255, 0, 0, 0);//160, 160, 80, 200
-	guiHeaderColor[1].set(255, 0, 0, 0);//80, 160, 160, 200
+	gui.setup("settings");
+	gui.setDefaultBackgroundColor(ofColor(0, 0, 0, 127));
+	gui.setDefaultFillColor(ofColor(160, 160, 160, 160));
+	gui.add(guiFPS.set("average FPS", 0, 0, 60));
+	gui.add(guiMinFPS.set("minimum FPS", 0, 0, 60));
+	gui.add(doFullScreen.set("fullscreen (F)", false));
+	doFullScreen.addListener(this, &ofApp::setFullScreen);
+	gui.add(toggleGuiDraw.set("show gui (G)", false));
+	gui.add(doFlipCamera.set("flip camera", true));
+	gui.add(doDrawCamBackground.set("draw camera (C)", true));
+	gui.add(drawMode.set("draw mode", DRAW_COMPOSITE, DRAW_COMPOSITE, DRAW_MOUSE));
+	drawMode.addListener(this, &ofApp::drawModeSetName);
+	gui.add(drawName.set("MODE", "draw name"));
+
+
+	int guiColorSwitch = 0;
+	ofColor guiHeaderColor[2];
+	guiHeaderColor[0].set(160, 160, 80, 200);
+	guiHeaderColor[1].set(80, 160, 160, 200);
 	ofColor guiFillColor[2];
-	guiFillColor[0].set(255, 0, 0, 0);//160, 160, 80, 200
-	guiFillColor[1].set(255, 0, 0, 0);//80, 160, 160, 200
-	
-	gui.setDefaultHeaderBackgroundColor(guiHeaderColor[_switch]);
-	gui.setDefaultFillColor(guiFillColor[_switch]);
+	guiFillColor[0].set(160, 160, 80, 200);
+	guiFillColor[1].set(80, 160, 160, 200);
+
+	gui.setDefaultHeaderBackgroundColor(guiHeaderColor[guiColorSwitch]);
+	gui.setDefaultFillColor(guiFillColor[guiColorSwitch]);
+	guiColorSwitch = 1 - guiColorSwitch;
+	gui.add(opticalFlow.parameters);
+
+	gui.setDefaultHeaderBackgroundColor(guiHeaderColor[guiColorSwitch]);
+	gui.setDefaultFillColor(guiFillColor[guiColorSwitch]);
+	guiColorSwitch = 1 - guiColorSwitch;
+	gui.add(velocityMask.parameters);
+
+	gui.setDefaultHeaderBackgroundColor(guiHeaderColor[guiColorSwitch]);
+	gui.setDefaultFillColor(guiFillColor[guiColorSwitch]);
+	guiColorSwitch = 1 - guiColorSwitch;
+	gui.add(fluidSimulation.parameters);
+
+	gui.setDefaultHeaderBackgroundColor(guiHeaderColor[guiColorSwitch]);
+	gui.setDefaultFillColor(guiFillColor[guiColorSwitch]);
+	guiColorSwitch = 1 - guiColorSwitch;
+	gui.add(particleFlow.parameters);
+
+	gui.setDefaultHeaderBackgroundColor(guiHeaderColor[guiColorSwitch]);
+	gui.setDefaultFillColor(guiFillColor[guiColorSwitch]);
+	guiColorSwitch = 1 - guiColorSwitch;
+	gui.add(mouseForces.leftButtonParameters);
+
+	gui.setDefaultHeaderBackgroundColor(guiHeaderColor[guiColorSwitch]);
+	gui.setDefaultFillColor(guiFillColor[guiColorSwitch]);
+	guiColorSwitch = 1 - guiColorSwitch;
+	gui.add(mouseForces.rightButtonParameters);
+
+	visualizeParameters.setName("visualizers");
+	visualizeParameters.add(showScalar.set("show scalar", true));
+	visualizeParameters.add(showField.set("show field", true));
+	visualizeParameters.add(displayScalarScale.set("scalar scale", 0.15, 0.05, 1.0));
+	displayScalarScale.addListener(this, &ofApp::setDisplayScalarScale);
+	visualizeParameters.add(velocityFieldScale.set("velocity scale", 0.1, 0.0, 0.5));
+	velocityFieldScale.addListener(this, &ofApp::setVelocityFieldScale);
+	visualizeParameters.add(temperatureFieldScale.set("temperature scale", 0.1, 0.0, 0.5));
+	temperatureFieldScale.addListener(this, &ofApp::setTemperatureFieldScale);
+	visualizeParameters.add(pressureFieldScale.set("pressure scale", 0.02, 0.0, 0.5));
+	pressureFieldScale.addListener(this, &ofApp::setPressureFieldScale);
+	visualizeParameters.add(velocityLineSmooth.set("line smooth", false));
+	velocityLineSmooth.addListener(this, &ofApp::setVelocityLineSmooth);
+
+	gui.setDefaultHeaderBackgroundColor(guiHeaderColor[guiColorSwitch]);
+	gui.setDefaultFillColor(guiFillColor[guiColorSwitch]);
+	guiColorSwitch = 1 - guiColorSwitch;
+	gui.add(visualizeParameters);
+
+	gui.setDefaultHeaderBackgroundColor(guiHeaderColor[guiColorSwitch]);
+	gui.setDefaultFillColor(guiFillColor[guiColorSwitch]);
+	guiColorSwitch = 1 - guiColorSwitch;
+	gui.add(velocityDots.parameters);
+
+	// if the settings file is not present the parameters will not be set during this setup
+	if (!ofFile("settings.xml"))
+		gui.saveToFile("settings.xml");
+
+	gui.loadFromFile("settings.xml");
+
+	gui.minimizeAll();
+	toggleGuiDraw = false;
+
 }
 
 //--------------------------------------------------------------
 void ofApp::update(){
-	//経過時間の取得
-	//clock_t end = clock();
 
-	//差分を取り秒数に変換
-	//double sec = (double)(end - start_time_) / CLOCKS_PER_SEC;
-
-	//規定時間が経過したら自身を削除
-	/*if (sec >= total_sec_) {
-		ofExit();
-		return;
-	}*/
-
-	//フレームレートを設定
-	ofSetFrameRate(simulationFPS);
-	
-	float dt = 1.0 / max(ofGetFrameRate(), 1.f); 
-	
-	//カメラ更新
-	simpleCam.update();
-	if (simpleCam.isFrameNew()) {
-		cameraFbo.begin();
-		ofEnableBlendMode(OF_BLENDMODE_DISABLED);//OF_BLENDMODE_DISABLED
-		simpleCam.draw(cameraFbo.getWidth(), 0, -cameraFbo.getWidth(), cameraFbo.getHeight());//テスト環境用 
-		//simpleCam.draw(0, cameraFbo.getHeight(), cameraFbo.getWidth(), -cameraFbo.getHeight());//本番環境用 
-		/*
-		simpleCam.draw(cameraFbo.getWidth(), cameraFbo.getHeight(), -cameraFbo.getWidth(), -cameraFbo.getHeight()); 
-		simpleCam.draw(0, cameraFbo.getHeight(), cameraFbo.getWidth(), -cameraFbo.getHeight()); 
-		simpleCam.draw(cameraFbo.getWidth(), 0, -cameraFbo.getWidth(), cameraFbo.getHeight()); 
-		simpleCam.draw(0, 0, cameraFbo.getWidth(), cameraFbo.getHeight()); 
-		*/
-		cameraFbo.end();
-		opticalFlow.setInput(cameraFbo.getTexture());
+	// 規定時間が経過したらプログラムを終了させる
+	if( _proctime != -1 && _proctime < clock() ){
+		ofExit(); return;
 	}
-	//更新
-	opticalFlow.update(); 
-	//opticalflow更新
-	combinedBridgeFlow.setVelocity(opticalFlow.getVelocity());
-	combinedBridgeFlow.setDensity(cameraFbo.getTexture());
-	combinedBridgeFlow.update(dt); 
 
-//	velocityBridgeFlow.setVelocity(opticalFlow.getVelocity());
-//	velocityBridgeFlow.update(dt);
-//	densityBridgeFlow.setDensity(cameraFbo.getTexture());
-//	densityBridgeFlow.setVelocity(opticalFlow.getVelocity());
-//	densityBridgeFlow.update(dt);
-//	temperatureBridgeFlow.setDensity(cameraFbo.getTexture());
-//	temperatureBridgeFlow.setVelocity(opticalFlow.getVelocity());
-//	temperatureBridgeFlow.update(dt);
-	
-	//opticalflowから計算したものを煙に
-	fluidFlow.addVelocity(combinedBridgeFlow.getVelocity());
-	fluidFlow.addDensity(combinedBridgeFlow.getDensity());
-	fluidFlow.addTemperature(combinedBridgeFlow.getTemperature());
-	fluidFlow.update(dt);
+	deltaTime = ofGetElapsedTimef() - lastTime;
+	lastTime = ofGetElapsedTimef();
+
+	simpleCam.update();
+
+	if (simpleCam.isFrameNew()) {
+		ofPushStyle();
+		ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+		cameraFbo.begin();
+
+		if( _camFlipX && _camFlipY ){
+			simpleCam.draw(cameraFbo.getWidth(), cameraFbo.getHeight(), -cameraFbo.getWidth(), -cameraFbo.getHeight());
+		}
+		else if( _camFlipX ){
+			simpleCam.draw(0, cameraFbo.getHeight(), cameraFbo.getWidth(), -cameraFbo.getHeight());
+		}
+		else if( _camFlipY ){
+			simpleCam.draw(cameraFbo.getWidth(), 0, -cameraFbo.getWidth(), cameraFbo.getHeight());
+		}
+		else{
+			simpleCam.draw(0, 0, cameraFbo.getWidth(), cameraFbo.getHeight());
+		}
+			
+		cameraFbo.end();
+		ofPopStyle();
+
+		opticalFlow.setSource(cameraFbo.getTexture());
+
+		// opticalFlow.update(deltaTime);
+		// use internal deltatime instead
+		opticalFlow.update();
+
+		velocityMask.setDensity(cameraFbo.getTexture());
+		velocityMask.setVelocity(opticalFlow.getOpticalFlow());
+		velocityMask.update();
+	}
+
+
+	fluidSimulation.addVelocity(opticalFlow.getOpticalFlowDecay());
+	fluidSimulation.addDensity(velocityMask.getColorMask());
+	fluidSimulation.addTemperature(velocityMask.getLuminanceMask());
+
+	mouseForces.update(deltaTime);
+
+	for (int i=0; i<mouseForces.getNumForces(); i++) {
+		if (mouseForces.didChange(i)) {
+			switch (mouseForces.getType(i)) {
+			case FT_DENSITY:
+				fluidSimulation.addDensity(mouseForces.getTextureReference(i), mouseForces.getStrength(i));
+				break;
+			case FT_VELOCITY:
+				fluidSimulation.addVelocity(mouseForces.getTextureReference(i), mouseForces.getStrength(i));
+				particleFlow.addFlowVelocity(mouseForces.getTextureReference(i), mouseForces.getStrength(i));
+				break;
+			case FT_TEMPERATURE:
+				fluidSimulation.addTemperature(mouseForces.getTextureReference(i), mouseForces.getStrength(i));
+				break;
+			case FT_PRESSURE:
+				fluidSimulation.addPressure(mouseForces.getTextureReference(i), mouseForces.getStrength(i));
+				break;
+			case FT_OBSTACLE:
+				fluidSimulation.addTempObstacle(mouseForces.getTextureReference(i));
+			default:
+				break;
+			}
+		}
+	}
+
+	fluidSimulation.update();
+
+	if (particleFlow.isActive()) {
+		particleFlow.setSpeed(fluidSimulation.getSpeed());
+		particleFlow.setCellSize(fluidSimulation.getCellSize());
+		particleFlow.addFlowVelocity(opticalFlow.getOpticalFlow());
+		particleFlow.addFluidVelocity(fluidSimulation.getVelocity());
+		//		particleFlow.addDensity(fluidSimulation.getDensity());
+		particleFlow.setObstacle(fluidSimulation.getObstacle());
+	}
+	particleFlow.update();
+
+}
+
+//--------------------------------------------------------------
+void ofApp::keyPressed(int key){
+	switch (key) {
+	case 'G':
+	case 'g': toggleGuiDraw = !toggleGuiDraw; break;
+	case 'f':
+	case 'F': doFullScreen.set(!doFullScreen.get()); break;
+	case 'c':
+	case 'C': doDrawCamBackground.set(!doDrawCamBackground.get()); break;
+
+	case '1': drawMode.set(DRAW_COMPOSITE); break;
+	case '2': drawMode.set(DRAW_FLUID_FIELDS); break;
+	case '3': drawMode.set(DRAW_FLUID_VELOCITY); break;
+	case '4': drawMode.set(DRAW_FLUID_PRESSURE); break;
+	case '5': drawMode.set(DRAW_FLUID_TEMPERATURE); break;
+	case '6': drawMode.set(DRAW_OPTICAL_FLOW); break;
+	case '7': drawMode.set(DRAW_FLOW_MASK); break;
+	case '8': drawMode.set(DRAW_MOUSE); break;
+
+	case 'r':
+	case 'R':
+		fluidSimulation.reset();
+		fluidSimulation.addObstacle(flowToolsLogoImage.getTexture());
+		mouseForces.reset();
+		break;
+
+	default: break;
+	}
+}
+
+//--------------------------------------------------------------
+void ofApp::drawModeSetName(int &_value) {
+	switch(_value) {
+	case DRAW_COMPOSITE:		drawName.set("Composite      (1)"); break;
+	case DRAW_PARTICLES:		drawName.set("Particles      "); break;
+	case DRAW_FLUID_FIELDS:		drawName.set("Fluid Fields   (2)"); break;
+	case DRAW_FLUID_DENSITY:	drawName.set("Fluid Density  "); break;
+	case DRAW_FLUID_VELOCITY:	drawName.set("Fluid Velocity (3)"); break;
+	case DRAW_FLUID_PRESSURE:	drawName.set("Fluid Pressure (4)"); break;
+	case DRAW_FLUID_TEMPERATURE:drawName.set("Fld Temperature(5)"); break;
+	case DRAW_FLUID_DIVERGENCE: drawName.set("Fld Divergence "); break;
+	case DRAW_FLUID_VORTICITY:	drawName.set("Fluid Vorticity"); break;
+	case DRAW_FLUID_BUOYANCY:	drawName.set("Fluid Buoyancy "); break;
+	case DRAW_FLUID_OBSTACLE:	drawName.set("Fluid Obstacle "); break;
+	case DRAW_OPTICAL_FLOW:		drawName.set("Optical Flow   (6)"); break;
+	case DRAW_FLOW_MASK:		drawName.set("Flow Mask      (7)"); break;
+	case DRAW_SOURCE:			drawName.set("Source         "); break;
+	case DRAW_MOUSE:			drawName.set("Left Mouse     (8)"); break;
+	case DRAW_VELDOTS:			drawName.set("VelDots        (0)"); break;
+	}
 }
 
 //--------------------------------------------------------------
 void ofApp::draw(){
-	//初期化
 	ofClear(0,0);
-	//カメラ
-	ofPushStyle();
-	if (toggleCameraDraw.get()) {
-		ofEnableBlendMode(OF_BLENDMODE_DISABLED);
-		//ofEnableAlphaBlending();
-		cameraFbo.draw(0, 0, windowWidth, windowHeight);
+	if (doDrawCamBackground.get())
+		drawSource();
+
+
+	if (!toggleGuiDraw) {
+		ofHideCursor();
+		drawComposite();
 	}
-	
-	//煙
-	ofEnableBlendMode(OF_BLENDMODE_ADD);//OF_BLENDMODE_ALPHA / OF_BLENDMODE_ADD / OF_BLENDMODE_SCREEN 
-	//ofEnableAlphaBlending();
-	switch(visualizationMode.get()) {
-		case INPUT_FOR_DEN:	combinedBridgeFlow.drawInput(0, 0, windowWidth, windowHeight); break;
-		case INPUT_FOR_VEL:	opticalFlow.drawInput(0, 0, windowWidth, windowHeight); break;
-		case FLOW_VEL:		opticalFlow.draw(0, 0, windowWidth, windowHeight); break;
-		case BRIDGE_VEL:	combinedBridgeFlow.drawVelocity(0, 0, windowWidth, windowHeight); break;
-		case BRIDGE_DEN:	combinedBridgeFlow.drawDensity(0, 0, windowWidth, windowHeight); break;
-		case BRIDGE_TMP:	combinedBridgeFlow.drawTemperature(0, 0, windowWidth, windowHeight); break;
-		case BRIDGE_PRS:	break;
-		case OBSTACLE:		fluidFlow.drawObstacle(0, 0, windowWidth, windowHeight); break;
-		case OBST_OFFSET:	fluidFlow.drawObstacleOffset(0, 0, windowWidth, windowHeight); break;
-		case FLUID_BUOY:	fluidFlow.drawBuoyancy(0, 0, windowWidth, windowHeight); break;
-		case FLUID_VORT:	fluidFlow.drawVorticity(0, 0, windowWidth, windowHeight); break;
-		case FLUID_DIVE:	fluidFlow.drawDivergence(0, 0, windowWidth, windowHeight); break;
-		case FLUID_TMP:		fluidFlow.drawTemperature(0, 0, windowWidth, windowHeight); break;
-		case FLUID_PRS:		fluidFlow.drawPressure(0, 0, windowWidth, windowHeight); break;
-		case FLUID_VEL:		fluidFlow.drawVelocity(0, 0, windowWidth, windowHeight); break;
-		case FLUID_DEN:		fluidFlow.draw(0, 0, windowWidth, windowHeight); break;
-		default: break;
-	}
-	//ロゴ 
-	ofEnableBlendMode(OF_BLENDMODE_SUBTRACT);
-	flowToolsLogo.draw(0, 0, windowWidth, windowHeight);
-	
-	//GUI
-	if (toggleGuiDraw) { 
-		ofEnableBlendMode(OF_BLENDMODE_ALPHA);
+	else {
+		ofShowCursor();
+		switch(drawMode.get()) {
+		case DRAW_COMPOSITE: drawComposite(); break;
+		case DRAW_PARTICLES: drawParticles(); break;
+		case DRAW_FLUID_FIELDS: drawFluidFields(); break;
+		case DRAW_FLUID_DENSITY: drawFluidDensity(); break;
+		case DRAW_FLUID_VELOCITY: drawFluidVelocity(); break;
+		case DRAW_FLUID_PRESSURE: drawFluidPressure(); break;
+		case DRAW_FLUID_TEMPERATURE: drawFluidTemperature(); break;
+		case DRAW_FLUID_DIVERGENCE: drawFluidDivergence(); break;
+		case DRAW_FLUID_VORTICITY: drawFluidVorticity(); break;
+		case DRAW_FLUID_BUOYANCY: drawFluidBuoyance(); break;
+		case DRAW_FLUID_OBSTACLE: drawFluidObstacle(); break;
+		case DRAW_FLOW_MASK: drawMask(); break;
+		case DRAW_OPTICAL_FLOW: drawOpticalFlow(); break;
+		case DRAW_SOURCE: drawSource(); break;
+		case DRAW_MOUSE: drawMouseForces(); break;
+		case DRAW_VELDOTS: drawVelocityDots(); break;
+		}
 		drawGui();
 	}
+}
+
+//--------------------------------------------------------------
+void ofApp::drawComposite(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+
+	//ofEnableBlendMode(OF_BLENDMODE_ADD);
+	//fluidSimulation.draw(_x, _y, _width, _height);
+
+	ofEnableBlendMode(OF_BLENDMODE_ADD);
+	if (particleFlow.isActive())
+		particleFlow.draw(_x, _y, _width, _height);
+
+	//if (showLogo) {
+	//	flowToolsLogoImage.draw(_x, _y, _width, _height);
+	//}
+
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawParticles(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	ofEnableBlendMode(OF_BLENDMODE_ALPHA);
+	if (particleFlow.isActive())
+		particleFlow.draw(_x, _y, _width, _height);
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawFluidFields(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+
+	ofEnableBlendMode(OF_BLENDMODE_ALPHA);
+	pressureField.setPressure(fluidSimulation.getPressure());
+	pressureField.draw(_x, _y, _width, _height);
+	velocityTemperatureField.setVelocity(fluidSimulation.getVelocity());
+	velocityTemperatureField.setTemperature(fluidSimulation.getTemperature());
+	velocityTemperatureField.draw(_x, _y, _width, _height);
+	temperatureField.setTemperature(fluidSimulation.getTemperature());
+
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawFluidDensity(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+
+	fluidSimulation.draw(_x, _y, _width, _height);
+
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawFluidVelocity(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	if (showScalar.get()) {
+		ofClear(0,0);
+		ofEnableBlendMode(OF_BLENDMODE_ALPHA);
+		//	ofEnableBlendMode(OF_BLENDMODE_DISABLED); // altenate mode
+		displayScalar.setSource(fluidSimulation.getVelocity());
+		displayScalar.draw(_x, _y, _width, _height);
+	}
+	if (showField.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_ADD);
+		velocityField.setVelocity(fluidSimulation.getVelocity());
+		velocityField.draw(_x, _y, _width, _height);
+	}
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawFluidPressure(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	ofClear(128);
+	if (showScalar.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+		displayScalar.setSource(fluidSimulation.getPressure());
+		displayScalar.draw(_x, _y, _width, _height);
+	}
+	if (showField.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_ALPHA);
+		pressureField.setPressure(fluidSimulation.getPressure());
+		pressureField.draw(_x, _y, _width, _height);
+	}
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawFluidTemperature(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	if (showScalar.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+		displayScalar.setSource(fluidSimulation.getTemperature());
+		displayScalar.draw(_x, _y, _width, _height);
+	}
+	if (showField.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_ADD);
+		temperatureField.setTemperature(fluidSimulation.getTemperature());
+		temperatureField.draw(_x, _y, _width, _height);
+	}
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawFluidDivergence(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	if (showScalar.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+		displayScalar.setSource(fluidSimulation.getDivergence());
+		displayScalar.draw(_x, _y, _width, _height);
+	}
+	if (showField.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_ADD);
+		temperatureField.setTemperature(fluidSimulation.getDivergence());
+		temperatureField.draw(_x, _y, _width, _height);
+	}
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawFluidVorticity(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	if (showScalar.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+		displayScalar.setSource(fluidSimulation.getConfinement());
+		displayScalar.draw(_x, _y, _width, _height);
+	}
+	if (showField.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_ADD);
+		ofSetColor(255, 255, 255, 255);
+		velocityField.setVelocity(fluidSimulation.getConfinement());
+		velocityField.draw(_x, _y, _width, _height);
+	}
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawFluidBuoyance(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	if (showScalar.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+		displayScalar.setSource(fluidSimulation.getSmokeBuoyancy());
+		displayScalar.draw(_x, _y, _width, _height);
+	}
+	if (showField.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_ADD);
+		velocityField.setVelocity(fluidSimulation.getSmokeBuoyancy());
+		velocityField.draw(_x, _y, _width, _height);
+	}
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawFluidObstacle(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+	fluidSimulation.getObstacle().draw(_x, _y, _width, _height);
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawMask(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+	velocityMask.draw(_x, _y, _width, _height);
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawOpticalFlow(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	if (showScalar.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_ALPHA);
+		displayScalar.setSource(opticalFlow.getOpticalFlowDecay());
+		displayScalar.draw(0, 0, _width, _height);
+	}
+	if (showField.get()) {
+		ofEnableBlendMode(OF_BLENDMODE_ADD);
+		velocityField.setVelocity(opticalFlow.getOpticalFlowDecay());
+		velocityField.draw(0, 0, _width, _height);
+	}
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawSource(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+	cameraFbo.draw(_x, _y, _width, _height);
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawMouseForces(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	ofClear(0,0);
+
+	for(int i=0; i<mouseForces.getNumForces(); i++) {
+		ofEnableBlendMode(OF_BLENDMODE_ADD);
+		if (mouseForces.didChange(i)) {
+			ftDrawForceType dfType = mouseForces.getType(i);
+			if (dfType == FT_DENSITY)
+				mouseForces.getTextureReference(i).draw(_x, _y, _width, _height);
+		}
+	}
+
+	for(int i=0; i<mouseForces.getNumForces(); i++) {
+		ofEnableBlendMode(OF_BLENDMODE_ALPHA);
+		if (mouseForces.didChange(i)) {
+			switch (mouseForces.getType(i)) {
+			case FT_VELOCITY:
+				velocityField.setVelocity(mouseForces.getTextureReference(i));
+				velocityField.draw(_x, _y, _width, _height);
+				break;
+			case FT_TEMPERATURE:
+				temperatureField.setTemperature(mouseForces.getTextureReference(i));
+				temperatureField.draw(_x, _y, _width, _height);
+				break;
+			case FT_PRESSURE:
+				pressureField.setPressure(mouseForces.getTextureReference(i));
+				pressureField.draw(_x, _y, _width, _height);
+				break;
+			default:
+				break;
+			}
+		}
+	}
+
+	ofPopStyle();
+}
+
+//--------------------------------------------------------------
+void ofApp::drawVelocityDots(int _x, int _y, int _width, int _height) {
+	ofPushStyle();
+	ofEnableBlendMode(OF_BLENDMODE_ADD);
+	velocityDots.setVelocity(fluidSimulation.getVelocity());
+	velocityDots.draw(_x, _y, _width, _height);
 	ofPopStyle();
 }
 
 //--------------------------------------------------------------
 void ofApp::drawGui() {
 	guiFPS = (int)(ofGetFrameRate() + 0.5);
-	
-	//最小fpsの計算
-	float deltaTime = ofGetElapsedTimef() - lastTime;
-	lastTime = ofGetElapsedTimef();
+
+	// calculate minimum fps
 	deltaTimeDeque.push_back(deltaTime);
-	
+
 	while (deltaTimeDeque.size() > guiFPS.get())
 		deltaTimeDeque.pop_front();
-	
+
 	float longestTime = 0;
-	for (int i=0; i<(int)deltaTimeDeque.size(); i++){
-		if (deltaTimeDeque[i] > longestTime) longestTime = deltaTimeDeque[i];
+	for (int i=0; i<deltaTimeDeque.size(); i++){
+		if (deltaTimeDeque[i] > longestTime)
+			longestTime = deltaTimeDeque[i];
 	}
-	
+
 	guiMinFPS.set(1.0 / longestTime);
-	
+
+
 	ofPushStyle();
-	ofEnableBlendMode(OF_BLENDMODE_ALPHA); 
+	ofEnableBlendMode(OF_BLENDMODE_ALPHA);
 	gui.draw();
+
+	// HACK TO COMPENSATE FOR DISSAPEARING MOUSE
+	ofEnableBlendMode(OF_BLENDMODE_SUBTRACT);
+	ofDrawCircle(ofGetMouseX(), ofGetMouseY(), ofGetWindowWidth() / 300.0);
+	ofEnableBlendMode(OF_BLENDMODE_ADD);
+	ofDrawCircle(ofGetMouseX(), ofGetMouseY(), ofGetWindowWidth() / 600.0);
 	ofPopStyle();
 }
 
-//--------------------------------------------------------------
-void ofApp::keyPressed(int key){
-	//デバッグ用
-	switch (key) {
-		default: break;
-		case '1': visualizationMode.set(INPUT_FOR_DEN); break;//描画モード変更(1～0)
-		case '2': visualizationMode.set(INPUT_FOR_VEL); break;
-		case '3': visualizationMode.set(FLOW_VEL); break;
-		case '4': visualizationMode.set(BRIDGE_VEL); break;
-		case '5': visualizationMode.set(BRIDGE_DEN); break;
-		case '6': visualizationMode.set(FLUID_VORT); break;
-		case '7': visualizationMode.set(FLUID_TMP); break;
-		case '8': visualizationMode.set(FLUID_PRS); break;
-		case '9': visualizationMode.set(FLUID_VEL); break;
-		case '0': visualizationMode.set(FLUID_DEN); break;
-		case 'G':toggleGuiDraw = !toggleGuiDraw; break;//GUI表示/非表示
-		case 'F': ofExit(); break;//削除
-		case 'C': toggleCameraDraw.set(!toggleCameraDraw.get()); break;//カメラ表示/非表示
-		case 'R': toggleReset.set(!toggleReset.get()); break;//リセット
-	}
-}
-
-//--------------------------------------------------------------
-void ofApp::toggleResetListener(bool& _value) {
-	if (_value) {
-		for (auto flow : flows) { flow->reset(); }
-		fluidFlow.addObstacle(flowToolsLogo.getTexture());
-	}
-	_value = false;
-}
-
-void ofApp::simulationResolutionListener(int &_value){
-	//再計算用
-	densityWidth = outputWidth;
-	densityHeight = outputHeight;
-	simulationWidth = densityWidth / simulationScale;
-	simulationHeight = densityHeight / simulationScale;
-	
-	opticalFlow.resize(simulationWidth, simulationHeight);
-	combinedBridgeFlow.resize(simulationWidth, simulationHeight, densityWidth, densityHeight);
-	
-	fluidFlow.resize(simulationWidth, simulationHeight, densityWidth, densityHeight);
-	fluidFlow.addObstacle(flowToolsLogo.getTexture());
-}
